@@ -19,6 +19,7 @@ import os
 import pickle
 
 import imgaug.augmenters as iaa
+import imgaug.parameters as iap
 import numpy as np
 import scipy.io as sio
 from deeplabcut.pose_estimation_tensorflow.datasets import augmentation
@@ -218,7 +219,8 @@ class ImgaugPoseDataset(BasePoseDataset):
 
         cfg_cnt = cfg.get("contrast", {})
         cfg_cnv = cfg.get("convolution", {})
-
+        cfg_bld = cfg.get("blending", {})
+        
         contrast_aug = ["histeq", "clahe", "gamma", "sigmoid", "log", "linear"]
         for aug in contrast_aug:
             aug_val = cfg_cnt.get(aug, False)
@@ -233,6 +235,13 @@ class ImgaugPoseDataset(BasePoseDataset):
             if aug_val:
                 cfg_cnv[aug + "ratio"] = cfg_cnv.get(aug + "ratio", 0.1)
 
+        blending_aug = ["simplex"]
+        for aug in blending_aug:
+            aug_val = cfg_bld.get(aug, False)
+            cfg_bld[aug] = aug_val
+            if aug_val:
+                cfg_bld[aug + "ratio"] = cfg_bld.get(aug + "ratio", 0.1)
+        
         if cfg_cnt["histeq"]:
             opt = get_aug_param(cfg_cnt["histeq"])
             pipeline.add(
@@ -290,7 +299,17 @@ class ImgaugPoseDataset(BasePoseDataset):
                     iaa.CropAndPad(percent=(-crop_by, crop_by), keep_size=False),
                 )
             )
-            pipeline.add(iaa.Resize({"height": height, "width": width}))
+            pipeline.add(iaa.Resize({"height": height, "width": width}))    
+
+        if cfg_bld["simplex"]:
+            # opt = get_aug_param(cfg_bld["simplex"])
+            pipeline.add(iaa.Sometimes(
+                cfg_bld["simplexratio"], 
+                iaa.BlendAlphaSimplexNoise(
+                    iaa.Multiply(iap.Uniform(0.7, 1.3), per_channel=True), 
+                    size_px_max=(2, 16), 
+                    upscale_method="nearest")))
+
         return pipeline
 
     def get_batch(self):
