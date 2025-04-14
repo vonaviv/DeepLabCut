@@ -11,7 +11,7 @@
 import os
 
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
 from deeplabcut.gui.dlc_params import DLCParams
 from deeplabcut.gui.widgets import ConfigEditor
 
@@ -54,7 +54,7 @@ def _create_grid_layout(
     alignment=None,
     spacing: int = 20,
     margins: tuple = None,
-) -> QtWidgets.QGridLayout():
+) -> QtWidgets.QGridLayout:
     layout = QtWidgets.QGridLayout()
     layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
     layout.setSpacing(spacing)
@@ -89,6 +89,11 @@ class BodypartListWidget(QtWidgets.QListWidget):
 
         self.itemSelectionChanged.connect(self.update_selected_bodyparts)
 
+    def refresh(self):
+        self.clear()
+        self.addItems(self.root.all_bodyparts)
+        self.update_selected_bodyparts()
+
     def update_selected_bodyparts(self):
         self.selected_bodyparts = [item.text() for item in self.selectedItems()]
         self.root.logger.info(f"Selected bodyparts:\n\t{self.selected_bodyparts}")
@@ -117,7 +122,7 @@ class VideoSelectionWidget(QtWidgets.QWidget):
         # Select videos
         self.select_video_button = QtWidgets.QPushButton("Select videos")
         self.select_video_button.setMaximumWidth(200)
-        self.select_video_button.clicked.connect(self.select_videos)
+        self.select_video_button.clicked.connect(self.update_videos)
         self.root.video_files_.connect(self._update_video_selection)
 
         # Number of selected videos text
@@ -153,22 +158,105 @@ class VideoSelectionWidget(QtWidgets.QWidget):
             self.selected_videos_text.setText("")
             self.select_video_button.setText("Select videos")
 
-    def select_videos(self):
+    def update_videos(self):
         cwd = self.root.project_folder
+
+        # Create a filter string with both lowercase and uppercase extensions
+
+        video_types = [f"*.{ext.lower()}" for ext in DLCParams.VIDEOTYPES[1:]] + [
+            f"*.{ext.upper()}" for ext in DLCParams.VIDEOTYPES[1:]
+        ]
+        video_files = f"Videos ({' '.join(video_types)})"
+
         filenames = QtWidgets.QFileDialog.getOpenFileNames(
             self,
             "Select video(s) to analyze",
             cwd,
-            f"Videos ({' *.'.join(DLCParams.VIDEOTYPES)[1:]})",
+            video_files,
         )
 
         if filenames[0]:
             # Qt returns a tuple (list of files, filetype)
-            self.root.video_files = [os.path.abspath(vid) for vid in filenames[0]]
+            self.root.add_video_files([os.path.abspath(vid) for vid in filenames[0]])
 
     def clear_selected_videos(self):
-        self.root.video_files = set()
+        self.root.clear_video_files()
         self.root.logger.info(f"Cleared selected videos")
+
+
+class SnapshotSelectionWidget(QtWidgets.QWidget):
+    def __init__(
+        self,
+        root: QtWidgets.QMainWindow,
+        parent: QtWidgets.QWidget,
+        margins: tuple,
+        select_button_text: str,
+    ):
+        super(SnapshotSelectionWidget, self).__init__(parent)
+
+        self.root = root
+        self.parent = parent
+
+        self.selected_snapshot = None
+
+        self._init_layout(margins, select_button_text)
+
+    def _init_layout(self, margins, select_button_text):
+        layout = _create_horizontal_layout(margins=margins)
+
+        # Select videos
+        self.select_snapshot_button = QtWidgets.QPushButton(select_button_text)
+        self.select_snapshot_button.setMaximumWidth(200)
+        self.select_snapshot_button.clicked.connect(self.select_snapshot)
+
+        # Selected snapshot text
+        self.selected_snapshot_text = QtWidgets.QLabel(
+            ""
+        )  # updated when snapshot is selected
+
+        # Clear snapshot selection
+        self.clear_snapshot_button = QtWidgets.QPushButton("Clear selection")
+        self.clear_snapshot_button.clicked.connect(self.clear_selected_snapshot)
+        self.clear_snapshot_button.hide()
+
+        layout.addWidget(self.select_snapshot_button)
+        layout.addWidget(self.selected_snapshot_text)
+        layout.addWidget(self.clear_snapshot_button, alignment=Qt.AlignRight)
+
+        self.setLayout(layout)
+
+    def _update_selected_snapshot_display(self):
+        if self.selected_snapshot is None:
+            self.selected_snapshot_text.setText("")
+            self.clear_snapshot_button.hide()
+        else:
+            self.selected_snapshot_text.setText(
+                f"{os.path.basename(self.selected_snapshot)}"
+            )
+            self.clear_snapshot_button.show()
+
+    def select_snapshot(self):
+        # Create a filter string with both lowercase and uppercase extensions
+        snapshot_types = ["*.pt", "*.PT"]
+        snapshot_files = f"Snapshots ({' '.join(snapshot_types)})"
+
+        directory_to_open = self.root.models_folder
+
+        selected_snapshot, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select snapshot to start training from",
+            directory_to_open,
+            snapshot_files,
+        )
+        # When Canceling a file selection, Qt returns an empty string as selected file
+        if selected_snapshot:
+            self.selected_snapshot = os.path.abspath(selected_snapshot)
+
+        self._update_selected_snapshot_display()
+
+    def clear_selected_snapshot(self):
+        self.selected_snapshot = None
+        self._update_selected_snapshot_display()
 
 
 class TrainingSetSpinBox(QtWidgets.QSpinBox):
@@ -190,9 +278,15 @@ class ShuffleSpinBox(QtWidgets.QSpinBox):
         self.root = root
         self.parent = parent
 
-        self.setMaximum(100)
+        self.setMaximum(10_000)
         self.setValue(self.root.shuffle_value)
         self.valueChanged.connect(self.root.update_shuffle)
+        self.root.shuffle_change.connect(self.update_shuffle)
+
+    @Slot(int)
+    def update_shuffle(self, new_shuffle: int):
+        if new_shuffle != self.value():
+            self.setValue(new_shuffle)
 
 
 class DefaultTab(QtWidgets.QWidget):

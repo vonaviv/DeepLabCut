@@ -23,6 +23,7 @@ into this evaluation framework, please feel free to extend the base classes
 
 import abc
 import dataclasses
+import warnings
 from typing import Iterable
 from typing import Tuple
 
@@ -58,7 +59,7 @@ class Benchmark(abc.ABC):
         raise NotImplementedError()
 
     def __init__(self):
-        keys = ["name", "keypoints", "ground_truth", "metadata"]
+        keys = ["code", "name", "keypoints", "ground_truth", "metadata"]
         for key in keys:
             if not hasattr(self, key):
                 raise NotImplementedError(
@@ -89,6 +90,7 @@ class Benchmark(abc.ABC):
         root_mean_squared_error = float("nan")
         try:
             predictions = self.get_predictions(name)
+            predictions = self._validate_predictions(name, predictions)
             mean_avg_precision = self.compute_pose_map(predictions)
             root_mean_squared_error = self.compute_pose_rmse(predictions)
         except Exception as exception:
@@ -108,17 +110,37 @@ class Benchmark(abc.ABC):
             else:
                 raise NotImplementedError() from exception
         return Result(
+            code=self.code,
             method_name=name,
             benchmark_name=self.name,
             mean_avg_precision=mean_avg_precision,
             root_mean_squared_error=root_mean_squared_error,
         )
 
+    def _validate_predictions(self, name: str, predictions: dict) -> dict:
+        """Validates the submitted predictions object
+        Checks that there is a prediction for each test image, and raises a warning if
+        that is not the case. Returns only predictions made for test images.
+        """
+        test_images = deeplabcut.benchmark.metrics.load_test_images(
+            self.ground_truth, self.metadata
+        )
+        missing_images = set(test_images) - set(predictions.keys())
+        if len(missing_images) > 0:
+            warnings.warn(
+                f"Missing {len(missing_images)} test images in the predictions for "
+                f"{name}: {list(missing_images)} Metrics will be computed as if no "
+                "individuals were detected in those images."
+            )
+
+        return {img: predictions.get(img, tuple()) for img in test_images}
+
 
 @dataclasses.dataclass
 class Result:
     """Benchmark result."""
 
+    code: str
     method_name: str
     benchmark_name: str
     root_mean_squared_error: float = float("nan")
@@ -126,6 +148,7 @@ class Result:
     benchmark_version: str = __version__
 
     _export_mapping = dict(
+        code="code",
         benchmark_name="benchmark",
         method_name="method",
         benchmark_version="version",

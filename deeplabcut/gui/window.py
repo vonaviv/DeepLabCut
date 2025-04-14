@@ -15,29 +15,49 @@ import sys
 from functools import cached_property
 from pathlib import Path
 from typing import List
+from urllib.error import URLError
 import qdarkstyle
 
 import deeplabcut
-from deeplabcut import auxiliaryfunctions, VERSION
+from deeplabcut import auxiliaryfunctions, VERSION, compat
+from deeplabcut.core.engine import Engine
 from deeplabcut.gui import BASE_DIR, components, utils
 from deeplabcut.gui.tabs import *
 from deeplabcut.gui.widgets import StreamReceiver, StreamWriter
+from deeplabcut.utils.multiprocessing import call_with_timeout
 from napari_deeplabcut import misc
-from PySide6.QtWidgets import QMessageBox, QMenu, QWidget, QMainWindow
+from PySide6.QtWidgets import (
+    QMessageBox,
+    QMenu,
+    QWidget,
+    QMainWindow,
+    QComboBox,
+    QLabel,
+    QSizePolicy,
+)
 from PySide6 import QtCore
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QPixmap
 from PySide6 import QtWidgets, QtGui
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 
-def _check_for_updates():
-    is_latest, latest_version = utils.is_latest_deeplabcut_version()
-    is_latest_plugin, latest_plugin_version = misc.is_latest_version()
-    if is_latest and is_latest_plugin:
-        msg = QtWidgets.QMessageBox(
-            text=f"DeepLabCut is up-to-date",
+def _check_for_updates(silent=True):
+    try:
+        is_latest, latest_version = call_with_timeout(
+            utils.is_latest_deeplabcut_version, 5
         )
-        msg.exec_()
+        is_latest_plugin, latest_plugin_version = call_with_timeout(
+            misc.is_latest_version, 5
+        )
+    except (URLError, TimeoutError):  # Handle internet connectivity issues
+        is_latest = is_latest_plugin = True
+
+    if is_latest and is_latest_plugin:
+        if not silent:
+            msg = QtWidgets.QMessageBox(
+                text=f"DeepLabCut is up-to-date",
+            )
+            msg.exec_()
     else:
         if not is_latest and is_latest_plugin:
             text = f"DeepLabCut {latest_version} available"
@@ -53,20 +73,21 @@ def _check_for_updates():
             text=text,
         )
         msg.setIcon(QtWidgets.QMessageBox.Information)
-        update_btn = msg.addButton("Update", msg.AcceptRole)
+        update_btn = msg.addButton("Update", QtWidgets.QMessageBox.AcceptRole)
         msg.setDefaultButton(update_btn)
-        _ = msg.addButton("Skip", msg.RejectRole)
+        _ = msg.addButton("Skip", QtWidgets.QMessageBox.RejectRole)
         msg.exec_()
         if msg.clickedButton() is update_btn:
-            subprocess.check_call(
-                [sys.executable, "-m", *command]
-            )
+            subprocess.check_call([sys.executable, "-m", *command])
 
 
 class MainWindow(QMainWindow):
     config_loaded = QtCore.Signal()
     video_type_ = QtCore.Signal(str)
     video_files_ = QtCore.Signal(set)
+    engine_change = QtCore.Signal(Engine)
+    shuffle_change = QtCore.Signal(int)
+    shuffle_created = QtCore.Signal(int)
 
     def __init__(self, app):
         super(MainWindow, self).__init__()
@@ -84,6 +105,8 @@ class MainWindow(QMainWindow):
         self.trainingset_index = 0
         self.videotype = "mp4"
         self.files = set()
+
+        self._engine = Engine.PYTORCH
 
         self.default_set()
 
@@ -104,6 +127,10 @@ class MainWindow(QMainWindow):
         self.receiver = StreamReceiver(self.writer.queue)
         self.receiver.new_text.connect(self.print_to_status_bar)
 
+        # create logger to also log to the console
+        logging.basicConfig()
+        logging.getLogger("console").setLevel(logging.INFO)
+
         self._progress_bar = QtWidgets.QProgressBar()
         self._progress_bar.setMaximum(0)
         self._progress_bar.hide()
@@ -112,6 +139,7 @@ class MainWindow(QMainWindow):
     def print_to_status_bar(self, text):
         self.status_bar.showMessage(text)
         self.status_bar.repaint()
+        logging.getLogger("console").info(text)
 
     @property
     def toolbar(self):
@@ -152,6 +180,43 @@ class MainWindow(QMainWindow):
         return cfg
 
     @property
+    def engine(self) -> Engine:
+        return self._engine
+
+    @engine.setter
+    def engine(self, e: Engine) -> None:
+        if self._engine == e:
+            return
+
+        if e == e.TF:
+            try:
+                import tensorflow
+            except ModuleNotFoundError as err:
+                msg = QtWidgets.QMessageBox()
+                msg.setIcon(QtWidgets.QMessageBox.Warning)
+                msg.setText("Cannot use the TensorFlow engine.")
+                msg.setInformativeText(
+                    f"Error `{err}`\nCannot use the TensorFlow engine as TensorFlow "
+                    "is not installed. To use it, install TensorFlow with\n"
+                    "    Windows/Linux:\n"
+                    "        pip install 'deeplabcut[tf]'\n"
+                    "    Apple Silicon:\n"
+                    "        pip install 'deeplabcut[apple_mchips]'\n\n"
+                    "Please switch back to the PyTorch engine to use DeepLabCut, or install TensorFlow."
+                )
+
+                msg.setWindowTitle("Info")
+                msg.setMinimumWidth(900)
+                logo_dir = os.path.dirname(os.path.realpath("logo.png")) + os.path.sep
+                logo = logo_dir + "/assets/logo.png"
+                msg.setWindowIcon(QIcon(logo))
+                msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+                msg.exec_()
+
+        self._engine = e
+        self.engine_change.emit(e)
+
+    @property
     def project_folder(self) -> str:
         return self.cfg.get("project_path", os.path.expanduser("~/Desktop"))
 
@@ -176,18 +241,30 @@ class MainWindow(QMainWindow):
     @property
     def pose_cfg_path(self) -> str:
         try:
-            return os.path.join(
-                self.cfg["project_path"],
-                auxiliaryfunctions.get_model_folder(
-                    self.cfg["TrainingFraction"][int(self.trainingset_index)],
-                    int(self.shuffle_value),
-                    self.cfg,
-                ),
-                "train",
-                "pose_cfg.yaml",
+            return str(
+                compat.return_train_network_path(
+                    self.config,
+                    shuffle=int(self.shuffle_value),
+                    trainingsetindex=int(self.trainingset_index),
+                    modelprefix="",
+                )[0]
             )
         except FileNotFoundError:
             return str(Path(deeplabcut.__file__).parent / "pose_cfg.yaml")
+
+    @property
+    def models_folder(self) -> str:
+        try:
+            return str(
+                compat.return_train_network_path(
+                    self.config,
+                    shuffle=int(self.shuffle_value),
+                    trainingsetindex=int(self.trainingset_index),
+                    modelprefix="",
+                )[2]
+            )
+        except FileNotFoundError:
+            return self.project_folder()
 
     @property
     def inference_cfg_path(self) -> str:
@@ -208,6 +285,7 @@ class MainWindow(QMainWindow):
 
     def update_shuffle(self, value):
         self.shuffle_value = value
+        self.shuffle_change.emit(value)
         self.logger.info(f"Shuffle set to {self.shuffle_value}")
 
     @property
@@ -224,11 +302,23 @@ class MainWindow(QMainWindow):
     def video_files(self):
         return self.files
 
-    @video_files.setter
-    def video_files(self, video_files):
-        self.files = set(video_files)
-        self.video_files_.emit(self.files)
-        self.logger.info(f"Videos selected to analyze:\n{self.files}")
+    def add_video_files(self, new_video_files):
+        """
+        Add new video files to the existing set of files. This method ensures no duplicates are added.
+        Emits a signal to notify about the updated set of files.
+        """
+        new_video_files = set(new_video_files)
+        self.files.update(new_video_files) # Add new items to the existing set
+        self.video_files_.emit(self.files) # Emit the updated set of files
+        self.logger.info(f"Videos added to analyze:\n{new_video_files}\nCurrent video files:\n{self.files}")
+
+    def clear_video_files(self):
+        """
+        Clear all video files from the existing set. Emits a signal to notify the change.
+        """
+        self.files.clear()  # Reset the set to be empty
+        self.video_files_.emit(self.files)  # Emit the empty set
+        self.logger.info("All video files have been cleared.")
 
     def window_set(self):
         self.setWindowTitle("DeepLabCut")
@@ -302,6 +392,8 @@ class MainWindow(QMainWindow):
         widget.setLayout(self.layout)
         self.setCentralWidget(widget)
 
+        QTimer.singleShot(1000, lambda: _check_for_updates(silent=True))
+
     def default_set(self):
         self.name_default = ""
         self.proj_default = ""
@@ -349,7 +441,7 @@ class MainWindow(QMainWindow):
         self.aboutAction.triggered.connect(self._learn_dlc)
 
         self.check_updates = QAction("&Check for Updates...", self)
-        self.check_updates.triggered.connect(_check_for_updates)
+        self.check_updates.triggered.connect(lambda: _check_for_updates(silent=False))
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -388,9 +480,50 @@ class MainWindow(QMainWindow):
         self.file_menu.removeAction(self.openAction)
 
     def create_toolbar(self):
+        self.toolbar.clear()
         self.toolbar.addAction(self.newAction)
         self.toolbar.addAction(self.openAction)
         self.toolbar.addAction(self.helpAction)
+
+        size_policy = QSizePolicy()  # QtWidgets.QSizePolicy.Policy.Expanding
+        size_policy.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+        spacer = QLabel()
+        spacer.setSizePolicy(size_policy)
+        spacer.setStyleSheet("background: transparent;")
+
+        engine_label = QLabel()
+        engine_label.autoFillBackground()
+        engine_label.setText("Engine")
+        engine_label.setStyleSheet("background: transparent;")
+
+        engine_icon = QLabel()
+        engine_icon.setStyleSheet("background: transparent;")
+
+        def _update_icon(engine: str):
+            pixmap = QPixmap(f"deeplabcut/gui/media/dlc-{engine}.png")
+            engine_icon.setPixmap(
+                pixmap.scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio)
+            )
+
+        _update_icon("pt" if self.engine == Engine.PYTORCH else "tf")
+
+        engines = [engine for engine in Engine]
+
+        def _update_engine(index: int) -> None:
+            self.logger.info(f"Changed engine to {engines[index]}")
+            self.engine = engines[index]
+            _update_icon("pt" if self.engine == Engine.PYTORCH else "tf")
+
+        change_engine_widget = QComboBox()
+        change_engine_widget.addItems([e.aliases[0] for e in engines])
+        change_engine_widget.setFixedWidth(180)
+        change_engine_widget.currentIndexChanged.connect(_update_engine)
+        change_engine_widget.setCurrentIndex(engines.index(self.engine))
+
+        self.toolbar.addWidget(spacer)
+        self.toolbar.addWidget(engine_icon)
+        self.toolbar.addWidget(engine_label)
+        self.toolbar.addWidget(change_engine_widget)
 
     def remove_action(self):
         self.toolbar.removeAction(self.newAction)
@@ -490,7 +623,9 @@ class MainWindow(QMainWindow):
             h1_description="DeepLabCut - Step 4. Create training dataset",
         )
         self.train_network = TrainNetwork(
-            root=self, parent=None, h1_description="DeepLabCut - Train network"
+            root=self,
+            parent=None,
+            h1_description="DeepLabCut - Train network",
         )
         self.evaluate_network = EvaluateNetwork(
             root=self,
@@ -544,8 +679,10 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.video_editor, "Video editor (*)")
 
         if not self.is_multianimal:
-            self.refine_tracklets.setEnabled(False)
-        self.unsupervised_id_tracking.setEnabled(self.is_transreid_available())
+            self.tab_widget.removeTab(
+                self.tab_widget.indexOf(self.unsupervised_id_tracking)
+            )
+            self.tab_widget.removeTab(self.tab_widget.indexOf(self.refine_tracklets))
 
         self.setCentralWidget(self.tab_widget)
         self.tab_widget.currentChanged.connect(self.refresh_active_tab)

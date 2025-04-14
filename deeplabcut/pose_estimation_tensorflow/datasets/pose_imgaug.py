@@ -414,6 +414,7 @@ class ImgaugPoseDataset(BasePoseDataset):
         }
 
     def next_batch(self):
+        cfg = self.cfg
         while True:
             (
                 batch_images,
@@ -425,7 +426,8 @@ class ImgaugPoseDataset(BasePoseDataset):
             ) = self.get_batch()
 
             pipeline = self.build_augmentation_pipeline(
-                height=target_size[0], width=target_size[1], apply_prob=0.5
+                height=target_size[0], width=target_size[1],
+                apply_prob=cfg.get("apply_prob", 0.5),
             )
 
             batch_images, batch_joints = pipeline(
@@ -506,7 +508,7 @@ class ImgaugPoseDataset(BasePoseDataset):
         width = size[1]
         height = size[0]
         dist_thresh = float((width + height) / 6)
-        dist_thresh_sq = dist_thresh ** 2
+        dist_thresh_sq = dist_thresh**2
 
         std = dist_thresh / 4
         # Grid of coordinates
@@ -522,7 +524,7 @@ class ImgaugPoseDataset(BasePoseDataset):
                 map_j = grid.copy()
                 # Distance between the joint point and each coordinate
                 dist = np.linalg.norm(grid - (j_y, j_x), axis=2) ** 2
-                scmap_j = np.exp(-dist / (2 * (std ** 2)))
+                scmap_j = np.exp(-dist / (2 * (std**2)))
                 scmap[..., j_id] = scmap_j
                 locref_mask[dist <= dist_thresh_sq, j_id * 2 + 0] = 1
                 locref_mask[dist <= dist_thresh_sq, j_id * 2 + 1] = 1
@@ -547,7 +549,7 @@ class ImgaugPoseDataset(BasePoseDataset):
         self, joint_id, coords, data_item, size, scale
     ):
         dist_thresh = float(self.cfg["pos_dist_thresh"] * scale)
-        dist_thresh_sq = dist_thresh ** 2
+        dist_thresh_sq = dist_thresh**2
         num_joints = self.cfg["num_joints"]
 
         scmap = np.zeros(np.concatenate([size, np.array([num_joints])]))
@@ -574,7 +576,7 @@ class ImgaugPoseDataset(BasePoseDataset):
                 y = grid.copy()[:, :, 0]
                 dx = j_x - x * self.stride - self.half_stride
                 dy = j_y - y * self.stride - self.half_stride
-                dist = dx ** 2 + dy ** 2
+                dist = dx**2 + dy**2
                 mask1 = dist <= dist_thresh_sq
                 mask2 = (x >= min_x) & (x <= max_x)
                 mask3 = (y >= min_y) & (y <= max_y)

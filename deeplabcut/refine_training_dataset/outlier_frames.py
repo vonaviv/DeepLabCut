@@ -23,7 +23,7 @@ import pandas as pd
 import statsmodels.api as sm
 from skimage.util import img_as_ubyte
 
-from deeplabcut.pose_estimation_tensorflow.lib import inferenceutils
+from deeplabcut.core import inferenceutils
 from deeplabcut.utils import (
     auxiliaryfunctions,
     auxfun_multianimal,
@@ -235,7 +235,7 @@ def extract_outlier_frames(
     outlieralgorithm: str, optional, default="jump".
         String specifying the algorithm used to detect the outliers.
 
-        * ``'Fitting'`` fits a Auto Regressive Integrated Moving Average model to the
+        * ``'fitting'`` fits an Auto Regressive Integrated Moving Average model to the
           data and computes the distance to the estimated data. Larger distances than
           epsilon are then potentially identified as outliers
         * ``'jump'`` identifies larger jumps than 'epsilon' in any body part
@@ -416,7 +416,7 @@ def extract_outlier_frames(
                 temp_dt = df_temp.diff(axis=0) ** 2
                 temp_dt.drop("likelihood", axis=1, level="coords", inplace=True)
                 sum_ = temp_dt.groupby(level="bodyparts", axis=1).sum()
-                ind = df_temp.index[(sum_ > epsilon ** 2).any(axis=1)].tolist()
+                ind = df_temp.index[(sum_ > epsilon**2).any(axis=1)].tolist()
                 Indices.extend(ind)
             elif outlieralgorithm == "fitting":
                 d, o = compute_deviations(
@@ -1002,7 +1002,7 @@ def PlottingSingleFrame(
                     plt.scatter(
                         df_x[ind, index],
                         df_y[ind, index],
-                        s=dotsize ** 2,
+                        s=dotsize**2,
                         color=colors(map2bp[i]),
                         alpha=alphavalue,
                     )
@@ -1074,7 +1074,7 @@ def PlottingSingleFramecv2(
                     plt.scatter(
                         df_x[ind, index],
                         df_y[ind, index],
-                        s=dotsize ** 2,
+                        s=dotsize**2,
                         color=colors(map2bp[i]),
                         alpha=alphavalue,
                     )

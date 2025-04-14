@@ -13,6 +13,7 @@ class DLCParams:
         "",
         "avi",
         "mp4",
+        "mkv",
         "mov",
     ]
 
@@ -29,8 +30,6 @@ class DLCParams:
         "efficientnet-b3",
         "efficientnet-b6",
     ]
-
-    IMAGE_AUGMENTERS = ["default", "tensorpack", "imgaug"]
 
     FRAME_EXTRACTION_ALGORITHMS = ["kmeans", "uniform"]
 

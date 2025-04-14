@@ -13,7 +13,7 @@ import numpy as np
 import os
 import pickle
 import shelve
-from deeplabcut.pose_estimation_tensorflow.lib import trackingutils
+from deeplabcut.core import trackingutils
 from deeplabcut.refine_training_dataset.stitch import TrackletStitcher
 from pathlib import Path
 from .tracking_utils.preprocessing import query_feature_by_coord_in_img_space
@@ -33,8 +33,7 @@ def save_train_triplets(feature_fname, triplets, out_name):
 
     feature_dict = shelve.open(feature_fname, protocol=pickle.DEFAULT_PROTOCOL)
 
-    nframes = len(feature_dict.keys())
-
+    nframes = max(len(feature_dict.keys()), 2)
     zfill_width = int(np.ceil(np.log10(nframes)))
 
     for triplet in triplets:
@@ -97,6 +96,13 @@ def create_triplets_dataset(
 
         method = trackingutils.TRACK_METHODS[track_method]
         track_file = os.path.join(destfolder, vname + dlcscorer + f"{method}.pickle")
+        if not Path(track_file).exists():
+            raise ValueError(
+                f"Tracklet file {track_file} does not exist. Please run "
+                f"`analyze_videos` with the {method} tracker before using the ReID "
+                "transformer."
+            )
+
         out_fname = os.path.join(destfolder, vname + dlcscorer + "_triplet_vector.npy")
         create_train_using_pickle(
             feature_fname, track_file, out_fname, n_triplets=n_triplets

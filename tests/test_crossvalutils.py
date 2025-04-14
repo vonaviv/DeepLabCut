@@ -10,8 +10,7 @@
 #
 import numpy as np
 import pickle
-from deeplabcut.pose_estimation_tensorflow.lib import crossvalutils
-
+from deeplabcut.core import crossvalutils
 
 BEST_GRAPH = [14, 15, 16, 11, 22, 31, 61, 7, 59, 62, 64]
 BEST_GRAPH_MONTBLANC = [1, 0, 2, 5, 4, 3]
@@ -103,8 +102,8 @@ def test_benchmark_paf_graphs_montblanc(evaluation_data_and_metadata_montblanc):
     np.testing.assert_equal(
         results[1].loc["purity"].to_numpy().squeeze(),
         [
-            results_gt[0][6][('purity', 'mean')],
-            results_gt[0][6][('purity', 'std')],
+            results_gt[0][6][("purity", "mean")],
+            results_gt[0][6][("purity", "std")],
         ],
     )
     vals = [
@@ -116,9 +115,9 @@ def test_benchmark_paf_graphs_montblanc(evaluation_data_and_metadata_montblanc):
     np.testing.assert_equal(
         vals,
         [
-            results_gt[0][6][('mAP_train', 'mean')],
-            results_gt[0][6][('mAR_train', 'mean')],
-            results_gt[0][6][('mAP_test', 'mean')],
-            results_gt[0][6][('mAR_test', 'mean')],
+            results_gt[0][6][("mAP_train", "mean")],
+            results_gt[0][6][("mAR_train", "mean")],
+            results_gt[0][6][("mAP_test", "mean")],
+            results_gt[0][6][("mAR_test", "mean")],
         ],
     )

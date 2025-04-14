@@ -33,7 +33,7 @@ import pandas as pd
 
 from deeplabcut.utils import auxiliaryfunctions, conversioncode
 from deeplabcut.generate_training_dataset import trainingsetmanipulation
-from deeplabcut.pose_estimation_tensorflow.lib.trackingutils import TRACK_METHODS
+from deeplabcut.core.trackingutils import TRACK_METHODS
 
 
 def reorder_individuals_in_df(df: pd.DataFrame, order: list) -> pd.DataFrame:
@@ -74,7 +74,8 @@ def get_track_method(cfg, track_method=""):
             # check if it exists:
             if track_method not in TRACK_METHODS:
                 raise ValueError(
-                    f"Invalid tracking method. Only {', '.join(TRACK_METHODS)} are currently supported."
+                    f"Invalid tracking method. Only {', '.join(TRACK_METHODS)} are "
+                    "currently supported."
                 )
             return track_method
         else:  # default
@@ -147,7 +148,7 @@ def prune_paf_graph(list_of_edges, desired_n_edges=None, average_degree=None):
         )
 
     while True:
-        g = nx.Graph(random.sample(G.edges, desired_n_edges))
+        g = nx.Graph(random.sample(list(G.edges), desired_n_edges))
         if len(g.nodes) == n_nodes and nx.is_connected(g):
             print("Valid subgraph found...")
             break
